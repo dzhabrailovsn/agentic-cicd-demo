@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Дата актуальности** | 2026-11-03 · **ревизия 3** |
+| **Дата актуальности** | 2026-11-03 · **ревизия 4** |
 | **Состояние кода** | main, «openrouter LLM backend» (этот коммит); ревизии: 1 — `a472398`, 2 — `48f6717` |
 | **Инстанс** | `dzhabrailovsn/agentic-cicd-demo`, PRIVATE |
 | **Источники** | аудит рев. 1–2 + живые прогоны: `41683321364`/`41684552807` (success end-to-end), `41704653248` (success, v0.1.3 — проверка fallback-политики в бою) |
@@ -156,10 +156,10 @@ Environments: `staging` (без защиты), `production` (замысел: req
 | **A3** | 🔶 P1 (лимит плана) | Branch protection на main недоступен: HTTP 403 (free + PRIVATE). Required checks `tests`/`agent-review` не enforced — PR можно смержить мимо ревью | GitHub Pro/Team или переключить репо в public; затем PUT из README §«Включение branch protection» |
 | **A4** | 🔶 P1 (лимит плана) | Environment protection rules не применились: HTTP 422 «billing plan does not support required reviewers» → `prod-gate` не ждёт одобрения и проходит мгновенно. **Фактически сейчас прод-деплой автоматический для любого risk, несмотря на `AUTO_PROD_LOW_RISK=false`** | Та же причина/решение, что A3. До этого момента единственный барьер перед продом — smoke + A2 |
 | **A5** | ✅ ЗАКРЫТО (рев. 2) | URL не заданы → добавлен **DEMO-режим** smoke/verify: при пустой переменной job сам поднимает релизный артефакт (порты 3001/3002) и проверяет его; при задании URL автоматически включается real-режим | Задать URL вместе с A11 |
-| **A6** | 🟡 P2 | `npm install` вместо `npm ci`, нет `package-lock.json` → невоспроизводимые сборки | Сгенерировать lockfile, вернуть `npm ci` |
-| **A7** | 🟡 P2 | `rollback.yml` берёт `scripts/`/`health.sh` из checkout старого тега — поломка скриптов в прошлом релизе ломает откат | Брать скрипты из main (отдельный checkout `ref: main` для шагов верификации) |
+| **A6** | ✅ ЗАКРЫТО (рев. 4) | Сгенерирован `app/package-lock.json`, CI переключён на `npm ci` — воспроизводимые сборки | — |
+| **A7** | ✅ ЗАКРЫТО (рев. 4) | `post-verify` rollback берёт скрипты из **main** (старый тег больше не влияет на верификацию); шаг demo-aware — без `PROD_HEALTH_URL` пропускается с notice, а не фейлит откат | — |
 | **A8** | 🟡 P2 | `deploy.sh` исполняет `bash -c "$DEPLOY_CMD"` из repo variable — доверенная зона админа репо; менять variables может только admin (приемлемо, задокументировать) | Оставить; не класть туда секреты (см. README ⚠) |
-| **A9** | 🟢 P3 | `scripts/metrics.sh` отсутствует — verify видит только health-пробы (по дизайну) | Добавить read-only хук метрик для зрелого verify |
+| **A9** | ✅ ЗАКРЫТО (рев. 4) | Добавлен `scripts/metrics.sh` — read-only хук (repo variable `METRICS_URL`); вывод попадает в контекст verify; без URL — notice, не фейл | Подключить реальные метрики заданием `METRICS_URL` |
 | **A10** | 🟢 P3 | Git на Windows даёт CRLF-предупреждения; теоретический риск поломки LF-скриптов при повторном чекауте | Добавлен `.gitattributes` (в этом же коммите): `*.sh`, `*.yml` — `eol=lf` |
 | **A11** | 🔶 P1 (новое, рев. 2) | Деплой-таргет — demo-заглушка на раннере: «прод» — одноразовый процесс внутри job'а, состояние не сохраняется между джобами | Подключить реальный клауд: OIDC + настоящие `DEPLOY_CMD_*` + health URLs |
 | **A12** | ✅ ЗАКРЫТО (рев. 2) | `health.sh`: `for i in "$(seq …)"` (заквочено) выполнял **одну** пробу вместо N → `summary ok=1/5` → честный false-block смока (ран `41682567346`). Побочно найдено: `jq -R -s` на пустом вводе выдаёт пустоту (ломало `--argjson` эвристик) | Исправлено: цикл без кавычек; эвристики защищены от пустого ввода; проверено локально на живом сервере (ok=5/5) |
@@ -170,7 +170,8 @@ Environments: `staging` (без защиты), `production` (замысел: req
 - **D2** ✅ (рев. 2): `v0.1.1` — тег + GitHub Release + успешный `deploy-staging` (demo-таргет).
 - **D3** ✅ (рев. 2, DEMO-режим): `smoke → pass`, `summary ok=5/5`; real-режим — вместе с A11.
 - **D4** ⬜ — тариф/видимость репо (A3/A4).
-- **D5** 🔶: `verify → keep` подтверждён (ран `41683321364`); репетиция ручного rollback не проводилась (пара `v0.1.0` → `v0.1.1` готова для теста: `gh workflow run rollback.yml -f tag=v0.1.0`).
+- **D5** ✅ (рев. 4): репетиция rollback проведена — `gh workflow run rollback.yml -f tag=v0.2.0` (ран `41713110531`): validate → rollback-deploy → post-verify, все success. Авто-rollback из verify использует тот же механизм.
+- **PR-гейт** ✅ (рев. 4): первая живая проверка `ci-review` — [PR #2](https://github.com/dzhabrailovsn/agentic-cicd-demo/pull/2): tests ✓, agent-review ✓ (9s), комментарий агента `approve · risk: low`.
 
 ## 10. Эксплуатация
 

@@ -71,6 +71,7 @@ agentic-cicd/
    | `AGENT_API_KEY` | secret | ключ API агентского CLI | — |
    | `STAGING_HEALTH_URL` | variable | health-endpoint staging | `https://staging.example.com/health` |
    | `PROD_HEALTH_URL` | variable | health-endpoint прод | `https://example.com/health` |
+   | `METRICS_URL` | variable | read-only endpoint метрик для verify (Prometheus/API) — опционально | `https://metrics.example.com/metrics` |
    | `DEPLOY_CMD_STAGING` | variable | команда деплоя (получает `env VERSION`) | `kubectl set image ...` |
    | `DEPLOY_CMD_PRODUCTION` | variable | команда деплоя прод | — |
    | `AUTO_PROD_LOW_RISK` | variable | авто-прод без ручного одобрения для `risk=low` | `true` / `false` |
