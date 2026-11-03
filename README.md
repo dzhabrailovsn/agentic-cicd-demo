@@ -62,7 +62,11 @@ agentic-cicd/
 
    | Имя | Тип | Назначение | Пример |
    |---|---|---|---|
-   | `AGENT_BACKEND` | variable | `heur` (детерминированные эвристики, без секретов) / `cli` (LLM) | `heur` |
+   | `AGENT_BACKEND` | variable | `openai` (OpenRouter/совместимый LLM) / `heur` (эвристики, без секретов) / `cli` (headless-агент) | `openai` |
+   | `OPENAI_BASE_URL` | variable | OpenAI-совместимый endpoint (для `openai`) | `https://openrouter.ai/api/v1` |
+   | `OPENAI_MODEL` | variable | модель (для `openai`) | `openrouter/free` (Free Models Router) |
+   | `OPENROUTER_API_KEY` | secret | ключ OpenRouter (для `openai`) — [создать бесплатно](https://openrouter.ai/keys) | — |
+   | `AGENT_FALLBACK` | variable | fallback при недоступности LLM: `heur` (default) / `none` (строгий fail-closed) | `heur` |
    | `AGENT_CMD` | variable | headless-команда агента (для `cli`) | `zcode -p` / `claude -p` |
    | `AGENT_API_KEY` | secret | ключ API агентского CLI | — |
    | `STAGING_HEALTH_URL` | variable | health-endpoint staging | `https://staging.example.com/health` |
@@ -84,7 +88,7 @@ agentic-cicd/
    ручного одобрения — тогда единственными барьерами остаются fail-closed гейты
    агента и `DEPLOY_CMD` (не задан → деплой не идёт). Аналогично branch protection
    на main: включите после апгрейда/переключения видимости командой из SETUP ниже.
-5. **Агентский бэкенд**: по умолчанию `AGENT_BACKEND=heur` — детерминированные эвристики, секреты и CLI не нужны (GitHub Models retired 2026-07-30). Для LLM-агента: `AGENT_BACKEND=cli` + шаг `Install agent CLI` + secret `AGENT_API_KEY`.
+5. **Агентский бэкенд**: активен `AGENT_BACKEND=openai` — LLM через OpenRouter (бесплатные `:free`-модели, `openrouter/free` роутер). Пока secret `OPENROUTER_API_KEY` не задан, вердикты отдаёт fallback `heur` (автоматически, помечено `backend:heuristic`). После добавления ключа — LLM-вердикты (`backend:model`); при недоступности LLM пайплайн не встаёт (fallback), отключить: `AGENT_FALLBACK=none`. GitHub Models retired 2026-07-30 — путь удалён.
 6. **Branch protection на `main`**: required status checks — `tests` и `agent-review` из `ci-review.yml`.
 7. Merge в `main` → поезд поедет. Нюанс первого релиза: `previous_tag` пуст → авто-rollback недоступен (fail-closed).
 
@@ -122,6 +126,17 @@ agentic-cicd/
 - Права токенов минимальны и разложены по job'ам: `contents: write` только у release-prep (тег/release), `actions: write` только у verify (dispatch rollback), `pull-requests: write` только у ревью.
 - `workflow_dispatch`, вызванный через GITHUB_TOKEN, триггерит workflow (официальное исключение из правила «token-events не создают runs») — цепочка авто-rollback работает.
 - Секреты агента (`AGENT_API_KEY`) отделены от облачных; раннеры эфемерные; вердикты — в артефактах.
+
+## Подключение бесплатного LLM (OpenRouter) — 2 минуты
+
+1. Зарегистрируйтесь на [openrouter.ai](https://openrouter.ai/models) → **Keys** → **Create Key** (бесплатно).
+2. В терминале:
+   ```bash
+   gh secret set OPENROUTER_API_KEY --repo <owner>/<repo>
+   ```
+   (вставьте ключ по запросу). Следующий пуш — уже LLM-вердикты.
+3. Лимиты free-тарифа: 50 запросов/день (после разового пополнения $10 — 1000/день навсегда). Расход конвейера: 3 вызова на релиз + 1 на PR.
+4. Кто решал — видно в вердикте: `"backend":"model"` (LLM) или `"backend":"heuristic"` (fallback). Модель меняется переменной `OPENAI_MODEL` (список живых free-моделей: `curl -s https://openrouter.ai/api/v1/models | jq '[.data[] | select(.pricing.prompt=="0")]'`).
 
 ## Включение branch protection (после апгрейда или переключения в public)
 

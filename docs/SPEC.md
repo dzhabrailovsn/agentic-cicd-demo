@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Дата актуальности** | 2026-11-03 · **ревизия 2** |
-| **Состояние кода** | main, «blocker fixes» (этот коммит); ревизия 1 — `a472398` |
+| **Дата актуальности** | 2026-11-03 · **ревизия 3** |
+| **Состояние кода** | main, «openrouter LLM backend» (этот коммит); ревизии: 1 — `a472398`, 2 — `48f6717` |
 | **Инстанс** | `dzhabrailovsn/agentic-cicd-demo`, PRIVATE |
-| **Источники** | аудит рев. 1 + живые прогоны Actions: `41680931868` (fail: gh-models), `41682567346` (fail: честный smoke-block), `41683321364` (**success end-to-end**) |
-| **Статус системы** | ✅ конвейер работает end-to-end в demo-режиме: релиз **v0.1.1** прошёл release→staging→smoke→prod→verify(keep), ран `41683321364`. Осталось: enforcement-гейты (A3/A4, тариф), реальный прод-клауд (A11), LLM-агент (A1-note) |
+| **Источники** | аудит рев. 1–2 + живые прогоны: `41683321364`/`41684552807` (success end-to-end), `41704653248` (success, v0.1.3 — проверка fallback-политики в бою) |
+| **Статус системы** | ✅ конвейер end-to-end; агент: **openai-бэкенд (OpenRouter free) с авто-fallback на heur** — ждёт бесплатный ключ (`OPENROUTER_API_KEY`), до ключа вердикты отдаёт fallback (v0.1.3 подтверждён). Осталось: enforcement-гейты (A3/A4, тариф), реальный клауд (A11), вставить ключ (A1-note, финал) |
 
 ---
 
@@ -33,7 +33,7 @@ verify), авто- и ручной rollback, аудит-артефакты. Вн
 | Secrets | пусто — и для бэкенда `heur` **не требуются** (для LLM `cli` понадобится `AGENT_API_KEY`) | ✅ |
 | Environments | `staging`, `production`, `production-auto` созданы, `protection_rules=0` | 🔶 A3/A4 |
 | Branch protection (main) | HTTP 403 «Upgrade to GitHub Pro or make public» | 🔶 A3 |
-| Агентский бэкенд | `heur` — детерминированные эвристики (7 локальных тест-кейсов ✅ + живые вердикты в ране). GitHub Models **retired 2026-07-30** (API отвечает заглушкой `OK`) — gh-models путь удалён; `cli` сохранён для LLM | ✅ / LLM-опция (A1-note) |
+| Агентский бэкенд | **`openai`** — OpenAI-протокол (OpenRouter, free `:free`-модели, default `openrouter/free`); секрет `OPENROUTER_API_KEY` ожидается от владельца. При недоступности LLM — **авто-fallback на `heur`** (поле `"backend"` в вердикте фиксирует, кто решал; отключение — `AGENT_FALLBACK=none`). GitHub Models retired 2026-07-30 — путь удалён. Локальные тесты: mock-сервер (happy-path, fallback, fail-closed), 7 кейсов heur | ✅ / ключ — A1-note |
 | `DEPLOY_CMD_STAGING/PRODUCTION` | установлены → `demo-deploy.sh`: поднимает артефакт на раннере и проверяет /health | 🔶 A11 (не реальный клауд) |
 | Health URLs (staging/prod) | не заданы → smoke/verify работают в DEMO-режиме (артефакт поднимается в job, реальный URL — при задании переменной) | 🔶 A11 |
 | Прогоны | 4 рана Release train: 2 fail-closed (gh-models «OK»; AGENT_CMD до установки переменных), 1 честный smoke-block (`summary ok=1/5` — баг A12), 1 **success** end-to-end (`41683321364`) | ✅ |
@@ -104,7 +104,11 @@ rollback.yml: validate (тег существует) ──► rollback-deploy (
 
 | Имя | Тип | Требуемое значение | Факт |
 |---|---|---|---|
-| `AGENT_BACKEND` | variable | бэкенд агента: `heur` (эвристики) или `cli` (LLM) | ✅ `heur` |
+| `AGENT_BACKEND` | variable | бэкенд агента: `openai` (LLM) / `heur` (эвристики) / `cli` | ✅ `openai` |
+| `OPENAI_BASE_URL` | variable | OpenAI-совместимый endpoint | ✅ `https://openrouter.ai/api/v1` |
+| `OPENAI_MODEL` | variable | модель LLM | ✅ `openrouter/free` |
+| `OPENROUTER_API_KEY` | secret | ключ OpenRouter (free) | ⬜ ожидается от владельца (A1-note) |
+| `AGENT_FALLBACK` | variable | fallback LLM→heur (`heur` default / `none`) | default `heur` (в скрипте) |
 | `AGENT_CMD` | variable | headless-команда агента (backend=`cli`) | ✅ `zcode -p` (резерв) |
 | `AUTO_PROD_LOW_RISK` | variable | `true`/`false` | ✅ `false` |
 | `GH_MODEL` | variable | удалена вместе с retired GitHub Models | — |
@@ -147,7 +151,7 @@ Environments: `staging` (без защиты), `production` (замысел: req
 
 | ID | Приоритет | Находка | Рекомендация |
 |---|---|---|---|
-| **A1** | ✅ ЗАКРЫТО (рев. 2) | Первопричина вскрылась глубже: **GitHub Models полностью retired 2026-07-30** (docs; `models.github.ai` отвечает заглушкой `OK`, ран `41680931868`). Реализован бэкенд **`heur`** — детерминированные эвристики по тем же JSON-контрактам (7 локальных тест-кейсов + живые вердикты в `41683321364`). `AGENT_API_KEY`/CLI больше не блокеры; путь `cli` сохранён для полноценного LLM | Для LLM-ревью: `AGENT_BACKEND=cli` + шаг `Install agent CLI` + secret `AGENT_API_KEY` |
+| **A1** | ✅ ЗАКРЫТО (рев. 2); **рев. 3: LLM-слой добавлен** | GitHub Models retired 2026-07-30 (ран `41680931868`). Реализовано два уровня: **`openai`** — OpenRouter free-модели по OpenAI-протоколу (16 живых `:free`-моделей проверено по API; расход 3 вызова/релиз vs лимит 50/день) + **`heur`** — детерминированные эвристики как fallback. Проверено локально (mock: happy-path/fallback/fail-closed) и в бою (ран `41704653248`: «ключ не задан → fallback → v0.1.3 success»). Остался один шаг: владелец кладёт бесплатный ключ в secret `OPENROUTER_API_KEY` | [README §Подключение OpenRouter](../README.md) — 2 минуты |
 | **A2** | 🔶 → **A11** | `DEPLOY_CMD_*` установлены, но указывают на `demo-deploy.sh` (артефакт поднимается на раннере, /health проверяется — конвейер зелёный; реальный клауд не задействован) | См. новую A11 |
 | **A3** | 🔶 P1 (лимит плана) | Branch protection на main недоступен: HTTP 403 (free + PRIVATE). Required checks `tests`/`agent-review` не enforced — PR можно смержить мимо ревью | GitHub Pro/Team или переключить репо в public; затем PUT из README §«Включение branch protection» |
 | **A4** | 🔶 P1 (лимит плана) | Environment protection rules не применились: HTTP 422 «billing plan does not support required reviewers» → `prod-gate` не ждёт одобрения и проходит мгновенно. **Фактически сейчас прод-деплой автоматический для любого risk, несмотря на `AUTO_PROD_LOW_RISK=false`** | Та же причина/решение, что A3. До этого момента единственный барьер перед продом — smoke + A2 |
