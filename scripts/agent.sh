@@ -83,7 +83,7 @@ call_openai() {
     --arg model "$model" \
     --arg system 'Ты — автоматизационный агент в CI/CD. Твой ответ должен быть СТРОГО одним JSON-объектом без markdown-фенсов и пояснений, строго по схеме из промпта.' \
     --arg user "$(cat "$combined")" \
-    '{model: $model, temperature: 0, max_tokens: 4000, messages: [{role:"system", content:$system}, {role:"user", content:$user}]}')"
+    '{model: $model, temperature: 0, max_tokens: 10000, messages: [{role:"system", content:$system}, {role:"user", content:$user}]}')"
   if ! resp="$(curl -sS --max-time 180 -X POST "$endpoint" \
         -H "Authorization: Bearer $OPENAI_API_KEY" \
         -H "Content-Type: application/json" \
