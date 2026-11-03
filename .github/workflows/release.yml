@@ -4,6 +4,9 @@
 # skip для risk=low при AUTO_PROD_LOW_RISK=true) → deploy prod →
 # verify (агент: keep/rollback/escalate; rollback → dispatch rollback.yml).
 # Fail-closed: любой агентский шаг без валидного JSON останавливает релиз.
+#
+# Агентский бэкенд: AGENT_BACKEND=gh-models (GitHub Models через GITHUB_TOKEN,
+# permissions models: read) — внешние секреты не нужны. CLI-агент — как опция.
 
 name: Release train
 
@@ -20,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write            # аннотированный тег + GitHub Release
+      models: read
     concurrency:
       group: release-prep
       cancel-in-progress: false
@@ -43,14 +47,13 @@ jobs:
           echo "previous_tag=$PREV"        >> "$GITHUB_OUTPUT"
           echo "current_version=${PREV#v}" >> "$GITHUB_OUTPUT"
 
-      # Раскомментируйте установку вашего агентского CLI на раннере:
-      # - name: Install agent CLI
-      #   run: npm i -g @zcode/cli
-
       - name: "Agent: release plan"
         env:
+          AGENT_BACKEND: '${{ vars.AGENT_BACKEND }}'
           AGENT_CMD: '${{ vars.AGENT_CMD }}'
           AGENT_API_KEY: '${{ secrets.AGENT_API_KEY }}'
+          GH_MODEL: '${{ vars.GH_MODEL }}'
+          GITHUB_TOKEN: '${{ github.token }}'
         run: |
           {
             echo "previous_tag: ${{ steps.ctx.outputs.previous_tag }}"
@@ -116,26 +119,46 @@ jobs:
     permissions:
       contents: read
       issues: write
+      models: read
     steps:
       - uses: actions/checkout@v4
 
-      - name: Health probes (staging)
+      - name: Resolve staging target (real URL или DEMO на раннере)
         env:
           STAGING_URL: '${{ vars.STAGING_HEALTH_URL }}'
         run: |
-          [[ -n "$STAGING_URL" ]] || { echo "::error::vars.STAGING_HEALTH_URL не задан"; exit 1; }
-          bash scripts/health.sh "$STAGING_URL" 5 3 > /tmp/health.txt || true
-          cat /tmp/health.txt
+          if [[ -n "$STAGING_URL" ]]; then
+            echo real > /tmp/target_mode.txt
+            echo "$STAGING_URL" > /tmp/health_url.txt
+          else
+            echo "::notice::STAGING_HEALTH_URL не задан — DEMO режим: поднимаем артефакт релиза локально на раннере"
+            echo demo > /tmp/target_mode.txt
+            (PORT=3001 node app/server.js > /tmp/demo_srv.log 2>&1 &)
+            for i in $(seq 1 30); do
+              curl -fsS http://127.0.0.1:3001/health >/dev/null 2>&1 && break
+              sleep 0.5
+            done
+            echo "http://127.0.0.1:3001/health" > /tmp/health_url.txt
+          fi
+          echo "target: $(cat /tmp/health_url.txt) (mode: $(cat /tmp/target_mode.txt))"
 
-      # Раскомментируйте установку вашего агентского CLI на раннере:
-      # - name: Install agent CLI
-      #   run: npm i -g @zcode/cli
+      - name: Health probes (staging)
+        run: |
+          bash scripts/health.sh "$(cat /tmp/health_url.txt)" 5 3 > /tmp/health.txt || true
+          echo "--- context header ---"
+          echo "target_mode: $(cat /tmp/target_mode.txt)"
+          cat /tmp/health.txt
 
       - name: Agent smoke
         env:
+          AGENT_BACKEND: '${{ vars.AGENT_BACKEND }}'
           AGENT_CMD: '${{ vars.AGENT_CMD }}'
           AGENT_API_KEY: '${{ secrets.AGENT_API_KEY }}'
-        run: bash scripts/agent.sh prompts/smoke.md verdict.json /tmp/health.txt
+          GH_MODEL: '${{ vars.GH_MODEL }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: |
+          { echo "target_mode: $(cat /tmp/target_mode.txt)"; cat /tmp/health.txt; } > /tmp/smoke_ctx.txt
+          bash scripts/agent.sh prompts/smoke.md verdict.json /tmp/smoke_ctx.txt
 
       - name: Gate
         run: bash scripts/gate.sh verdict.json pass
@@ -226,17 +249,35 @@ jobs:
       contents: read
       actions: write            # gh workflow run rollback.yml
       issues: write
+      models: read
     steps:
       - uses: actions/checkout@v4
 
-      - name: Health probes (production, 2 раунда)
+      - name: Resolve production target (real URL или DEMO на раннере)
         env:
           PROD_URL: '${{ vars.PROD_HEALTH_URL }}'
         run: |
-          [[ -n "$PROD_URL" ]] || { echo "::error::vars.PROD_HEALTH_URL не задан"; exit 1; }
-          bash scripts/health.sh "$PROD_URL" 3 20 > /tmp/health_r1.txt || true
+          if [[ -n "$PROD_URL" ]]; then
+            echo real > /tmp/target_mode.txt
+            echo "$PROD_URL" > /tmp/health_url.txt
+          else
+            echo "::notice::PROD_HEALTH_URL не задан — DEMO режим: поднимаем артефакт релиза локально на раннере"
+            echo demo > /tmp/target_mode.txt
+            (PORT=3002 node app/server.js > /tmp/demo_srv.log 2>&1 &)
+            for i in $(seq 1 30); do
+              curl -fsS http://127.0.0.1:3002/health >/dev/null 2>&1 && break
+              sleep 0.5
+            done
+            echo "http://127.0.0.1:3002/health" > /tmp/health_url.txt
+          fi
+          echo "target: $(cat /tmp/health_url.txt) (mode: $(cat /tmp/target_mode.txt))"
+
+      - name: Health probes (production, 2 раунда)
+        run: |
+          URL="$(cat /tmp/health_url.txt)"
+          bash scripts/health.sh "$URL" 3 20 > /tmp/health_r1.txt || true
           sleep 60
-          bash scripts/health.sh "$PROD_URL" 3 20 > /tmp/health_r2.txt || true
+          bash scripts/health.sh "$URL" 3 20 > /tmp/health_r2.txt || true
           cat /tmp/health_r1.txt /tmp/health_r2.txt
 
       - name: Optional metrics hook (read-only)
@@ -249,15 +290,16 @@ jobs:
             echo "(metrics hook не задан)" > /tmp/metrics.txt
           fi
 
-      # Раскомментируйте установку вашего агентского CLI на раннере:
-      # - name: Install agent CLI
-      #   run: npm i -g @zcode/cli
-
       - name: Agent verify
         env:
+          AGENT_BACKEND: '${{ vars.AGENT_BACKEND }}'
           AGENT_CMD: '${{ vars.AGENT_CMD }}'
           AGENT_API_KEY: '${{ secrets.AGENT_API_KEY }}'
-        run: bash scripts/agent.sh prompts/verify.md verdict.json /tmp/health_r1.txt /tmp/health_r2.txt /tmp/metrics.txt
+          GH_MODEL: '${{ vars.GH_MODEL }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: |
+          { echo "target_mode: $(cat /tmp/target_mode.txt)"; cat /tmp/health_r1.txt /tmp/health_r2.txt /tmp/metrics.txt; } > /tmp/verify_ctx.txt
+          bash scripts/agent.sh prompts/verify.md verdict.json /tmp/verify_ctx.txt
 
       - name: Resolve verdict
         env:
