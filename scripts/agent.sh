@@ -4,19 +4,33 @@
 # Usage: bash agent.sh <prompt.md> <output.json> [context-file ...]
 #
 # Бэкенды (repo variable AGENT_BACKEND):
-#   heur  — ДЕТЕРМИНИРОВАННЫЕ эвристики без LLM (rule-based анализ диффа/проб/коммитов).
-#           Работает без внешних секретов. Вердикты помечены "backend":"heuristic".
-#   cli   — внешняя headless-команда AGENT_CMD ("claude -p" / "zcode -p" / ...),
-#           требует AGENT_API_KEY. Полноценный LLM-анализ.
+#   openai  — LLM по OpenAI-протоколу (OpenRouter и любой совместимый провайдер).
+#             OPENAI_BASE_URL (default https://openrouter.ai/api/v1),
+#             OPENAI_MODEL (default openrouter/free), OPENAI_API_KEY (секрет).
+#             Вердикты помечены "backend":"model".
+#   heur    — ДЕТЕРМИНИРОВАННЫЕ эвристики без LLM (rule-based анализ диффа/проб/коммитов).
+#             Работает без внешних секретов. Вердикты помечены "backend":"heuristic".
+#   cli     — внешняя headless-команда AGENT_CMD ("claude -p" / "zcode -p" / ...),
+#             требует AGENT_API_KEY. Полноценный LLM-анализ.
 #   gh-models — ЗАБРАН: GitHub Models retired 2026-07-30 (api отвечает заглушкой "OK").
 #
+# FALLBACK: если LLM-бэкенд недоступен (нет ключа / ошибка API / нет валидного
+# JSON за AGENT_MAX_ATTEMPTS попыток), выполняется откат на heur (AGENT_FALLBACK,
+# default "heur"; "none" отключает — тогда строгий fail-closed exit 1). Бэкенд
+# фактического решения всегда виден в поле "backend" вердикта.
+#
 # Env:
-#   AGENT_BACKEND       heur | cli (default: cli)
+#   AGENT_BACKEND       openai | heur | cli (default: cli)
+#   OPENAI_BASE_URL     OpenAI-совместимый endpoint (default https://openrouter.ai/api/v1)
+#   OPENAI_MODEL        модель (default openrouter/free — Free Models Router)
+#   OPENAI_API_KEY      ключ API (секрет, для openai)
+#   AGENT_FALLBACK      heur | none (default heur)
 #   AGENT_CMD           команда CLI-агента (backend=cli)
 #   AGENT_API_KEY       ключ API CLI-агента (backend=cli)
 #   AGENT_MAX_ATTEMPTS  попыток получить валидный JSON (default: 2)
 #
-# Политика fail-closed: нет валидного JSON -> exit 1 (гейт не пропустит).
+# Политика: гейты всегда fail-closed по CONTENT (verdict), LLM-недоступность —
+# fallback на детерминированные эвристики, не «молчаливый пропуск».
 
 set -euo pipefail
 
@@ -50,6 +64,42 @@ call_cli() {
     return 1
   fi
   "$AGENT_CMD" "$(cat "$combined")" > "$out.raw" 2> "$out.err" || true
+}
+
+# Backend 2: OpenAI-совместимый LLM (OpenRouter и др.).
+# Коды возврата: 0 — успех (сырой ответ в <out>.raw); 1 — ошибка вызова (ретрай);
+# 2 — конфигурация неполна (нет ключа) — ретраи бессмысленны.
+call_openai() {
+  local combined="$1" out="$2"
+  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+    echo "::notice::OPENAI_API_KEY не задан — LLM пропущен" >&2
+    return 2
+  fi
+  local base="${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}"
+  local model="${OPENAI_MODEL:-openrouter/free}"
+  local endpoint="${base%/}/chat/completions"
+  local payload resp
+  payload="$(jq -n \
+    --arg model "$model" \
+    --arg system 'Ты — автоматизационный агент в CI/CD. Твой ответ должен быть СТРОГО одним JSON-объектом без markdown-фенсов и пояснений, строго по схеме из промпта.' \
+    --arg user "$(cat "$combined")" \
+    '{model: $model, temperature: 0, max_tokens: 4000, messages: [{role:"system", content:$system}, {role:"user", content:$user}]}')"
+  if ! resp="$(curl -sS --max-time 180 -X POST "$endpoint" \
+        -H "Authorization: Bearer $OPENAI_API_KEY" \
+        -H "Content-Type: application/json" \
+        -H "HTTP-Referer: https://github.com/agentic-cicd" \
+        -H "X-Title: agentic-cicd-release-train" \
+        -d "$payload" 2> "$out.err")"; then
+    echo "::error::curl к $endpoint не удался: $(tail -n 2 "$out.err" 2>/dev/null | head -c 200)" >&2
+    return 1
+  fi
+  if jq -e '.choices[0].message.content' >/dev/null 2>&1 <<< "$resp"; then
+    jq -r '.choices[0].message.content' <<< "$resp" > "$out.raw"
+    echo "==> LLM ($model): ответ получен ($(wc -c < "$out.raw") байт)"
+    return 0
+  fi
+  echo "::error::LLM API вернул ошибку: $(echo "$resp" | head -c 300)" >&2
+  return 1
 }
 
 # ─── Backend 2: эвристики (детерминированные, без LLM) ───
@@ -235,8 +285,12 @@ call_heur() {
 MAX_ATTEMPTS="${AGENT_MAX_ATTEMPTS:-2}"
 BACKEND="${AGENT_BACKEND:-cli}"
 case "$BACKEND" in
-  cli|heur) ;;
-  *) echo "::error::неизвестный AGENT_BACKEND '$BACKEND' (допустимо: cli, heur)"; exit 1 ;;
+  cli|heur|openai) ;;
+  *) echo "::error::неизвестный AGENT_BACKEND '$BACKEND' (допустимо: openai, cli, heur)"; exit 1 ;;
+esac
+case "${AGENT_FALLBACK:-heur}" in
+  heur|none) ;;
+  *) echo "::error::неизвестный AGENT_FALLBACK '${AGENT_FALLBACK}' (допустимо: heur, none)"; exit 1 ;;
 esac
 
 # эвристики работают с исходными context-файлами, combined не нужен, но строим для cli
@@ -246,10 +300,11 @@ for f in "${CONTEXT_FILES[@]}"; do
 done
 
 attempt=1
+no_key=0
 while :; do
   echo "==> agent attempt $attempt/$MAX_ATTEMPTS (backend: $BACKEND, stage: $STAGE)"
   case "$BACKEND" in
-    cli)
+    cli|openai)
       COMBINED="$(mktemp)"
       {
         echo "===== PROMPT ====="
@@ -264,8 +319,17 @@ while :; do
           fi
         done
       } > "$COMBINED"
-      call_cli "$COMBINED" "$OUTPUT_FILE"
+      rc=0
+      if [[ "$BACKEND" == "openai" ]]; then
+        call_openai "$COMBINED" "$OUTPUT_FILE" || rc=$?
+      else
+        call_cli "$COMBINED" "$OUTPUT_FILE" || rc=$?
+      fi
       rm -f "$COMBINED"
+      if [[ "$BACKEND" == "openai" && "$rc" -eq 2 ]]; then
+        no_key=1   # ключа нет — ретраи бессмысленны, сразу fallback
+        break
+      fi
       ;;
     heur) call_heur "$OUTPUT_FILE" "${CONTEXT_FILES[@]}" ;;
   esac
@@ -277,6 +341,21 @@ while :; do
   (( attempt >= MAX_ATTEMPTS )) && break
   attempt=$((attempt + 1))
 done
+
+# Fallback: LLM недоступен → детерминированные эвристики (или строгий fail-closed).
+if [[ "$BACKEND" != "heur" && "${AGENT_FALLBACK:-heur}" != "none" ]]; then
+  if [[ "$no_key" -eq 1 ]]; then
+    echo "::notice::LLM ($BACKEND): ключ не задан — fallback на эвристики (heur)"
+  else
+    echo "::notice::LLM ($BACKEND) недоступен после $MAX_ATTEMPTS попыток — fallback на эвристики (heur)"
+  fi
+  call_heur "$OUTPUT_FILE" "${CONTEXT_FILES[@]}"
+  if extract_json "$OUTPUT_FILE.raw" "$OUTPUT_FILE"; then
+    echo "==> verdict OK (fallback: heur)"
+    jq -c . "$OUTPUT_FILE"
+    exit 0
+  fi
+fi
 
 echo "::error::агент не вернул валидный JSON за $MAX_ATTEMPTS попыток; последние строки stderr:" >&2
 tail -n 15 "$OUTPUT_FILE.err" >&2 2>/dev/null || true

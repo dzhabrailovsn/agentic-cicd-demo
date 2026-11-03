@@ -51,6 +51,11 @@ jobs:
           AGENT_BACKEND: '${{ vars.AGENT_BACKEND }}'
           AGENT_CMD: '${{ vars.AGENT_CMD }}'
           AGENT_API_KEY: '${{ secrets.AGENT_API_KEY }}'
+          OPENAI_BASE_URL: '${{ vars.OPENAI_BASE_URL }}'
+          OPENAI_MODEL: '${{ vars.OPENAI_MODEL }}'
+          OPENAI_API_KEY: '${{ secrets.OPENROUTER_API_KEY }}'
+          AGENT_FALLBACK: '${{ vars.AGENT_FALLBACK }}'
+          AGENT_MAX_ATTEMPTS: '3'
         run: bash scripts/agent.sh prompts/review.md verdict.json /tmp/diff.patch
 
       - name: Gate (fail-closed)

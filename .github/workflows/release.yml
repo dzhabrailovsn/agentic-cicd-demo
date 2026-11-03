@@ -5,8 +5,9 @@
 # verify (агент: keep/rollback/escalate; rollback → dispatch rollback.yml).
 # Fail-closed: любой агентский шаг без валидного JSON останавливает релиз.
 #
-# Агентский бэкенд: AGENT_BACKEND=heur (детерминированные эвристики, без секретов)
-# или cli (headless LLM-агент + AGENT_API_KEY). GitHub Models retired 2026-07-30.
+# Агентский бэкенд: AGENT_BACKEND=openai (OpenRouter/совместимый LLM + secret
+# OPENROUTER_API_KEY), cli (headless-агент) или heur (эвристики без секретов).
+# LLM недоступен → авто-fallback на heur (AGENT_FALLBACK, см. scripts/agent.sh).
 
 name: Release train
 
@@ -51,6 +52,11 @@ jobs:
           AGENT_BACKEND: '${{ vars.AGENT_BACKEND }}'
           AGENT_CMD: '${{ vars.AGENT_CMD }}'
           AGENT_API_KEY: '${{ secrets.AGENT_API_KEY }}'
+          OPENAI_BASE_URL: '${{ vars.OPENAI_BASE_URL }}'
+          OPENAI_MODEL: '${{ vars.OPENAI_MODEL }}'
+          OPENAI_API_KEY: '${{ secrets.OPENROUTER_API_KEY }}'
+          AGENT_FALLBACK: '${{ vars.AGENT_FALLBACK }}'
+          AGENT_MAX_ATTEMPTS: '3'
         run: |
           {
             echo "previous_tag: ${{ steps.ctx.outputs.previous_tag }}"
@@ -150,6 +156,11 @@ jobs:
           AGENT_BACKEND: '${{ vars.AGENT_BACKEND }}'
           AGENT_CMD: '${{ vars.AGENT_CMD }}'
           AGENT_API_KEY: '${{ secrets.AGENT_API_KEY }}'
+          OPENAI_BASE_URL: '${{ vars.OPENAI_BASE_URL }}'
+          OPENAI_MODEL: '${{ vars.OPENAI_MODEL }}'
+          OPENAI_API_KEY: '${{ secrets.OPENROUTER_API_KEY }}'
+          AGENT_FALLBACK: '${{ vars.AGENT_FALLBACK }}'
+          AGENT_MAX_ATTEMPTS: '3'
         run: |
           { echo "target_mode: $(cat /tmp/target_mode.txt)"; cat /tmp/health.txt; } > /tmp/smoke_ctx.txt
           bash scripts/agent.sh prompts/smoke.md verdict.json /tmp/smoke_ctx.txt
@@ -288,6 +299,11 @@ jobs:
           AGENT_BACKEND: '${{ vars.AGENT_BACKEND }}'
           AGENT_CMD: '${{ vars.AGENT_CMD }}'
           AGENT_API_KEY: '${{ secrets.AGENT_API_KEY }}'
+          OPENAI_BASE_URL: '${{ vars.OPENAI_BASE_URL }}'
+          OPENAI_MODEL: '${{ vars.OPENAI_MODEL }}'
+          OPENAI_API_KEY: '${{ secrets.OPENROUTER_API_KEY }}'
+          AGENT_FALLBACK: '${{ vars.AGENT_FALLBACK }}'
+          AGENT_MAX_ATTEMPTS: '3'
         run: |
           { echo "target_mode: $(cat /tmp/target_mode.txt)"; cat /tmp/health_r1.txt /tmp/health_r2.txt /tmp/metrics.txt; } > /tmp/verify_ctx.txt
           bash scripts/agent.sh prompts/verify.md verdict.json /tmp/verify_ctx.txt
