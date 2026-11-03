@@ -334,6 +334,12 @@ while :; do
     heur) call_heur "$OUTPUT_FILE" "${CONTEXT_FILES[@]}" ;;
   esac
   if extract_json "$OUTPUT_FILE.raw" "$OUTPUT_FILE"; then
+    if [[ "$BACKEND" == "openai" ]]; then
+      # пометить вердикт фактическим бэкендом и моделью (аудит, симметрично heur)
+      jq -c --arg model "${OPENAI_MODEL:-openrouter/free}" \
+        '. + {backend:"model", model:$model}' "$OUTPUT_FILE" \
+        > "$OUTPUT_FILE.tmp" && mv "$OUTPUT_FILE.tmp" "$OUTPUT_FILE"
+    fi
     echo "==> verdict OK"
     jq -c . "$OUTPUT_FILE"
     exit 0
