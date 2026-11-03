@@ -139,6 +139,30 @@ agentic-cicd/
 3. Лимиты free-тарифа: 50 запросов/день (после разового пополнения $10 — 1000/день навсегда). Расход конвейера: 3 вызова на релиз + 1 на PR.
 4. Кто решал — видно в вердикте: `"backend":"model"` (LLM) или `"backend":"heuristic"` (fallback). Модель меняется переменной `OPENAI_MODEL` (список живых free-моделей: `curl -s https://openrouter.ai/api/v1/models | jq '[.data[] | select(.pricing.prompt=="0")]'`).
 
+## Подключение реального прода: Cloud.ru Container Apps
+
+Официальный сценарий cloud.ru: [CI/CD из GitHub Actions в Container Apps](https://cloud.ru/docs/tutorials-evolution/list/topics/container-apps__ci-cd).
+Обновление образа в реестре → Container App сама выкатывает новую ревизию (опция «Автоматическое развертывание»).
+
+**Ваш чек-лист (консоль cloud.ru Evolution):**
+1. **Artifact Registry** — создайте реестр (имя вида `myrepo` → URI `myrepo.cr.cloud.ru`).
+2. **Персональный ключ доступа** к реестру → получите логин и пароль.
+3. Секреты в GitHub:
+   ```bash
+   gh secret set EVO_CR_LOGIN --repo <owner>/<repo>   # логин ключа
+   gh secret set EVO_CR_PWD   --repo <owner>/<repo>   # пароль ключа
+   ```
+4. Сообщите мне URI реестра — я выставлю `EVO_CR_URI`, переключу `DEPLOY_CMD_*` на
+   `scripts/deploy-cloudru.sh`, и следующий поезд запушит образы
+   `<registry>/app-staging` и `<registry>/app-prod`.
+5. После первого пуша: в Artifact Registry → образ → **Создать Container App**
+   (порт 8080, мин. конфигурация, «Публичный адрес» + «Автоматическое развертывание»)
+   — одну из `app-staging`, другую из `app-prod`. Пришлите их URL
+   (`https://<name>.containerapps.ru`) — я пропишу health-URL, и smoke/verify
+   перейдут в real-режим: конвейер начнёт проверять настоящий прод.
+
+Проверка локально: `bash scripts/deploy-cloudru-check.sh` (docker build + /health в контейнере).
+
 ## Включение branch protection (после апгрейда или переключения в public)
 
 ```bash
