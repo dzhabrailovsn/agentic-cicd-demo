@@ -62,7 +62,8 @@ agentic-cicd/
 
    | Имя | Тип | Назначение | Пример |
    |---|---|---|---|
-   | `AGENT_CMD` | variable | headless-команда агента | `zcode -p` / `claude -p` |
+   | `AGENT_BACKEND` | variable | `heur` (детерминированные эвристики, без секретов) / `cli` (LLM) | `heur` |
+   | `AGENT_CMD` | variable | headless-команда агента (для `cli`) | `zcode -p` / `claude -p` |
    | `AGENT_API_KEY` | secret | ключ API агентского CLI | — |
    | `STAGING_HEALTH_URL` | variable | health-endpoint staging | `https://staging.example.com/health` |
    | `PROD_HEALTH_URL` | variable | health-endpoint прод | `https://example.com/health` |
@@ -83,7 +84,7 @@ agentic-cicd/
    ручного одобрения — тогда единственными барьерами остаются fail-closed гейты
    агента и `DEPLOY_CMD` (не задан → деплой не идёт). Аналогично branch protection
    на main: включите после апгрейда/переключения видимости командой из SETUP ниже.
-5. **Агентский CLI на раннере**: раскомментируйте шаги `Install agent CLI` в workflow и задайте `AGENT_CMD`.
+5. **Агентский бэкенд**: по умолчанию `AGENT_BACKEND=heur` — детерминированные эвристики, секреты и CLI не нужны (GitHub Models retired 2026-07-30). Для LLM-агента: `AGENT_BACKEND=cli` + шаг `Install agent CLI` + secret `AGENT_API_KEY`.
 6. **Branch protection на `main`**: required status checks — `tests` и `agent-review` из `ci-review.yml`.
 7. Merge в `main` → поезд поедет. Нюанс первого релиза: `previous_tag` пуст → авто-rollback недоступен (fail-closed).
 
@@ -110,7 +111,8 @@ agentic-cicd/
 
 ## Кастомизация
 
-- `scripts/deploy.sh` — намеренный плейсхолдер: без `DEPLOY_CMD_*` падает с подсказкой (ничего не деплоим «вслепую»). Впишите реальный деплой через переменные или прямо в deploy-job'ы.
+- `scripts/deploy.sh` — обёртка деплоя: без `DEPLOY_CMD_*` падает с подсказкой (ничего не деплоим «вслепую»). Впишите реальный деплой через переменные или прямо в deploy-job'ы.
+- `scripts/demo-deploy.sh` — текущий таргет (`DEPLOY_CMD_*` указывают на него): поднимает артефакт на раннере и проверяет /health. Это demo-заглушка; для прода замените `DEPLOY_CMD_*` на команду реального клауда. Аналогично smoke/verify: без health-URL работают в DEMO-режиме против локально поднятого артефакта.
 - `scripts/metrics.sh` (опционально) — ваш read-only хук метрик (Prometheus/CloudWatch API); его вывод попадает агенту в контекст verify.
 - Пороги решений агента — в `prompts/verify.md`; можете вынести в variable и подставлять.
 

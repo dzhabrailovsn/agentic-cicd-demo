@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Дата актуальности** | 2026-11-03 |
-| **Состояние кода** | commit `a472398` (main), рабочее дерево чистое |
+| **Дата актуальности** | 2026-11-03 · **ревизия 2** |
+| **Состояние кода** | main, «blocker fixes» (этот коммит); ревизия 1 — `a472398` |
 | **Инстанс** | `dzhabrailovsn/agentic-cicd-demo`, PRIVATE |
-| **Источники** | локальный аудит (17 файлов, `bash -n`, прогон тестов) + GitHub API-снимок (`gh repo view`, `gh variable list`, `gh secret list`, `gh api …/environments`, `…/branches/main/protection`, `gh run list`) |
-| **Статус системы** | 🔶 каркас развёрнут и работает fail-closed; сквозной деплой заблокирован находками A1–A5 (см. §8) |
+| **Источники** | аудит рев. 1 + живые прогоны Actions: `41680931868` (fail: gh-models), `41682567346` (fail: честный smoke-block), `41683321364` (**success end-to-end**) |
+| **Статус системы** | ✅ конвейер работает end-to-end в demo-режиме: релиз **v0.1.1** прошёл release→staging→smoke→prod→verify(keep), ран `41683321364`. Осталось: enforcement-гейты (A3/A4, тариф), реальный прод-клауд (A11), LLM-агент (A1-note) |
 
 ---
 
@@ -29,15 +29,15 @@ verify), авто- и ручной rollback, аудит-артефакты. Вн
 | Shell-скрипты (4 шт.) | `agent.sh`, `gate.sh`, `deploy.sh`, `health.sh` — `bash -n` OK | ✅ |
 | Демо-приложение | `app/` — lint/test/build зелёные локально (Node 24.16) | ✅ |
 | JSON-схема вердиктов | `schema/verdict.schema.json` — валидный JSON | ✅ |
-| Variables | `AGENT_CMD=zcode -p`, `AUTO_PROD_LOW_RISK=false` | ✅ установлены |
-| Secrets | **пусто** (`AGENT_API_KEY` отсутствует) | 🔴 A1 |
+| Variables | `AGENT_BACKEND=heur`, `AGENT_CMD=zcode -p` (резерв для cli), `AUTO_PROD_LOW_RISK=false`, `DEPLOY_CMD_*=bash scripts/demo-deploy.sh …` | ✅ установлены |
+| Secrets | пусто — и для бэкенда `heur` **не требуются** (для LLM `cli` понадобится `AGENT_API_KEY`) | ✅ |
 | Environments | `staging`, `production`, `production-auto` созданы, `protection_rules=0` | 🔶 A3/A4 |
 | Branch protection (main) | HTTP 403 «Upgrade to GitHub Pro or make public» | 🔶 A3 |
-| Агентский CLI на раннере | не установлен (`zcode: command not found`) | 🔴 A1 |
-| `DEPLOY_CMD_STAGING/PRODUCTION` | не заданы → `deploy.sh` падает fail-closed | 🔴 A2 |
-| Health URLs (staging/prod) | не заданы → smoke/verify упадут | 🔴 A5 |
-| Прогоны | 2 × Release train = failure на `release-prep` (8s/12s) — fail-closed сработал | ✅ ожидаемое |
-| Releases/теги | нет (ни одного успешного релиза) | 🔶 следствие A1 |
+| Агентский бэкенд | `heur` — детерминированные эвристики (7 локальных тест-кейсов ✅ + живые вердикты в ране). GitHub Models **retired 2026-07-30** (API отвечает заглушкой `OK`) — gh-models путь удалён; `cli` сохранён для LLM | ✅ / LLM-опция (A1-note) |
+| `DEPLOY_CMD_STAGING/PRODUCTION` | установлены → `demo-deploy.sh`: поднимает артефакт на раннере и проверяет /health | 🔶 A11 (не реальный клауд) |
+| Health URLs (staging/prod) | не заданы → smoke/verify работают в DEMO-режиме (артефакт поднимается в job, реальный URL — при задании переменной) | 🔶 A11 |
+| Прогоны | 4 рана Release train: 2 fail-closed (gh-models «OK»; AGENT_CMD до установки переменных), 1 честный smoke-block (`summary ok=1/5` — баг A12), 1 **success** end-to-end (`41683321364`) | ✅ |
+| Releases/теги | `v0.1.0`, `v0.1.1` (Latest) — notes сгенерированы агент-стадией | ✅ |
 
 ## 3. Архитектура
 
@@ -104,13 +104,15 @@ rollback.yml: validate (тег существует) ──► rollback-deploy (
 
 | Имя | Тип | Требуемое значение | Факт |
 |---|---|---|---|
-| `AGENT_CMD` | variable | headless-команда агента | ✅ `zcode -p` |
+| `AGENT_BACKEND` | variable | бэкенд агента: `heur` (эвристики) или `cli` (LLM) | ✅ `heur` |
+| `AGENT_CMD` | variable | headless-команда агента (backend=`cli`) | ✅ `zcode -p` (резерв) |
 | `AUTO_PROD_LOW_RISK` | variable | `true`/`false` | ✅ `false` |
-| `AGENT_API_KEY` | secret | ключ API агента | ❌ отсутствует |
-| `STAGING_HEALTH_URL` | variable | health-endpoint staging | ❌ не задан |
-| `PROD_HEALTH_URL` | variable | health-endpoint prod | ❌ не задан |
-| `DEPLOY_CMD_STAGING` | variable | команда деплоя staging | ❌ не задана |
-| `DEPLOY_CMD_PRODUCTION` | variable | команда деплоя прод | ❌ не задана |
+| `GH_MODEL` | variable | удалена вместе с retired GitHub Models | — |
+| `AGENT_API_KEY` | secret | ключ API агента (backend=`cli`) | ❌ отсутствует (не нужен для `heur`) |
+| `STAGING_HEALTH_URL` | variable | health-endpoint staging | ❌ не задан → DEMO-режим smoke |
+| `PROD_HEALTH_URL` | variable | health-endpoint прод | ❌ не задан → DEMO-режим verify |
+| `DEPLOY_CMD_STAGING` | variable | команда деплоя (получает `env VERSION`) | ✅ `bash scripts/demo-deploy.sh staging` |
+| `DEPLOY_CMD_PRODUCTION` | variable | команда деплоя прод | ✅ `bash scripts/demo-deploy.sh production` |
 
 Environments: `staging` (без защиты), `production` (замысел: required reviewer
 `dzhabrailovsn` + wait timer), `production-auto` (без reviewers — для low-risk
@@ -145,27 +147,26 @@ Environments: `staging` (без защиты), `production` (замысел: req
 
 | ID | Приоритет | Находка | Рекомендация |
 |---|---|---|---|
-| **A1** | 🔴 P0 (блокер) | Секрет `AGENT_API_KEY` отсутствует; агентский CLI не установлен на раннере → каждый Release train падает на `release-prep` (подтверждено ранами 41671637749, 41672117755). Дополнительно: пакет `zcode` может быть недоступен из публичного npm — тогда сменить `AGENT_CMD` (например `claude -p` + `@anthropic-ai/claude-code`). | Установить публичный headless-CLI в шагах `Install agent CLI`; добавить secret `AGENT_API_KEY`; при необходимости поправить `AGENT_CMD` |
-| **A2** | 🔴 P0 (блокер) | `DEPLOY_CMD_STAGING/PRODUCTION` не заданы → деплой падает fail-closed (подсказка в stderr `deploy.sh`) | Задать команды под реальный клауд (примеры в сообщении ошибки) |
+| **A1** | ✅ ЗАКРЫТО (рев. 2) | Первопричина вскрылась глубже: **GitHub Models полностью retired 2026-07-30** (docs; `models.github.ai` отвечает заглушкой `OK`, ран `41680931868`). Реализован бэкенд **`heur`** — детерминированные эвристики по тем же JSON-контрактам (7 локальных тест-кейсов + живые вердикты в `41683321364`). `AGENT_API_KEY`/CLI больше не блокеры; путь `cli` сохранён для полноценного LLM | Для LLM-ревью: `AGENT_BACKEND=cli` + шаг `Install agent CLI` + secret `AGENT_API_KEY` |
+| **A2** | 🔶 → **A11** | `DEPLOY_CMD_*` установлены, но указывают на `demo-deploy.sh` (артефакт поднимается на раннере, /health проверяется — конвейер зелёный; реальный клауд не задействован) | См. новую A11 |
 | **A3** | 🔶 P1 (лимит плана) | Branch protection на main недоступен: HTTP 403 (free + PRIVATE). Required checks `tests`/`agent-review` не enforced — PR можно смержить мимо ревью | GitHub Pro/Team или переключить репо в public; затем PUT из README §«Включение branch protection» |
 | **A4** | 🔶 P1 (лимит плана) | Environment protection rules не применились: HTTP 422 «billing plan does not support required reviewers» → `prod-gate` не ждёт одобрения и проходит мгновенно. **Фактически сейчас прод-деплой автоматический для любого risk, несмотря на `AUTO_PROD_LOW_RISK=false`** | Та же причина/решение, что A3. До этого момента единственный барьер перед продом — smoke + A2 |
-| **A5** | 🔴 P1 | `STAGING_HEALTH_URL`/`PROD_HEALTH_URL` не заданы → smoke/verify упадут (после снятия A1/A2) | Задать URL после первого успешного деплоя |
+| **A5** | ✅ ЗАКРЫТО (рев. 2) | URL не заданы → добавлен **DEMO-режим** smoke/verify: при пустой переменной job сам поднимает релизный артефакт (порты 3001/3002) и проверяет его; при задании URL автоматически включается real-режим | Задать URL вместе с A11 |
 | **A6** | 🟡 P2 | `npm install` вместо `npm ci`, нет `package-lock.json` → невоспроизводимые сборки | Сгенерировать lockfile, вернуть `npm ci` |
 | **A7** | 🟡 P2 | `rollback.yml` берёт `scripts/`/`health.sh` из checkout старого тега — поломка скриптов в прошлом релизе ломает откат | Брать скрипты из main (отдельный checkout `ref: main` для шагов верификации) |
 | **A8** | 🟡 P2 | `deploy.sh` исполняет `bash -c "$DEPLOY_CMD"` из repo variable — доверенная зона админа репо; менять variables может только admin (приемлемо, задокументировать) | Оставить; не класть туда секреты (см. README ⚠) |
 | **A9** | 🟢 P3 | `scripts/metrics.sh` отсутствует — verify видит только health-пробы (по дизайну) | Добавить read-only хук метрик для зрелого verify |
 | **A10** | 🟢 P3 | Git на Windows даёт CRLF-предупреждения; теоретический риск поломки LF-скриптов при повторном чекауте | Добавлен `.gitattributes` (в этом же коммите): `*.sh`, `*.yml` — `eol=lf` |
+| **A11** | 🔶 P1 (новое, рев. 2) | Деплой-таргет — demo-заглушка на раннере: «прод» — одноразовый процесс внутри job'а, состояние не сохраняется между джобами | Подключить реальный клауд: OIDC + настоящие `DEPLOY_CMD_*` + health URLs |
+| **A12** | ✅ ЗАКРЫТО (рев. 2) | `health.sh`: `for i in "$(seq …)"` (заквочено) выполнял **одну** пробу вместо N → `summary ok=1/5` → честный false-block смока (ран `41682567346`). Побочно найдено: `jq -R -s` на пустом вводе выдаёт пустоту (ломало `--argjson` эвристик) | Исправлено: цикл без кавычек; эвристики защищены от пустого ввода; проверено локально на живом сервере (ok=5/5) |
 
 ## 9. Definition of Done (перевод системы в рабочее состояние)
 
-- **D1** (снимает A1): секрет + CLI установлены; тест-PR показывает
-  `agent-review → approve` и комментарий агента.
-- **D2** (снимает A2): merge → тег + GitHub Release + успешный `deploy-staging`.
-- **D3** (снимает A5): `smoke → pass` на реальном staging.
-- **D4** (снимает A3/A4): branch protection активен; prod-gate реально ждёт
-  Approve (наблюдаемо «Review pending … production»).
-- **D5**: первый полный релиз с `verify → keep`; репетиция `rollback.yml` на
-  демо-окружении.
+- **D1** ✅ (рев. 2, бэкенд `heur`): агентские вердикты в живом ране `41683321364`; LLM-вариант — после ключа (A1-note).
+- **D2** ✅ (рев. 2): `v0.1.1` — тег + GitHub Release + успешный `deploy-staging` (demo-таргет).
+- **D3** ✅ (рев. 2, DEMO-режим): `smoke → pass`, `summary ok=5/5`; real-режим — вместе с A11.
+- **D4** ⬜ — тариф/видимость репо (A3/A4).
+- **D5** 🔶: `verify → keep` подтверждён (ран `41683321364`); репетиция ручного rollback не проводилась (пара `v0.1.0` → `v0.1.1` готова для теста: `gh workflow run rollback.yml -f tag=v0.1.0`).
 
 ## 10. Эксплуатация
 
@@ -182,16 +183,20 @@ Environments: `staging` (без защиты), `production` (замысел: req
 2. Роллбэк первый релиз сделать не может (нет previous_tag) — fail-closed.
 3. Канарейные раскатки и метрики — вне скоупа Варианта 2 (A9 — точка расширения).
 4. Enforcement-гейты зависят от тарифного плана GitHub (A3/A4).
+5. Бэкенд `heur` — rule-based, **не LLM**: ревью диффа поверхностное
+   (секреты/TLS/паттерны), release-notes механические. Содержательный анализ —
+   путь `cli` (A1-note). Все вердикты помечены `"backend":"heuristic"` для аудита.
 
 ---
 
 ### Приложение: снимки аудита
 
-- Runs: `41671637749` (8s, failure, 16:11:37Z), `41672117755` (12s, failure,
-  16:14:22Z) — обе на шаге `release-prep / Agent: release plan`; первая с
-  «AGENT_CMD не задан» (variable выставлен через 33 с после пуша), вторая —
-  `zcode -p: command not found` при 2 попытках.
-- `gh api …/environments` → `production/staging/production-auto`,
-  `protection_rules: 0` у всех (2026-11-03T16:12–16:15Z).
-- `gh api …/branches/main/protection` → `403` (2026-11-03).
-- Теги/релизы: отсутствуют на момент спеки.
+- Ревизия 1: `41671637749` (8s, fail — «AGENT_CMD не задан»), `41672117755`
+  (12s, fail — `zcode -p: command not found`); `gh api …/environments` →
+  `protection_rules: 0` у всех; branch protection → `403`; теги/релизы: нет.
+- Ревизия 2: `41680931868` fail — «GitHub Models вернул ошибку: OK» (сервис
+  retired 2026-07-30); `41682567346` — release-prep ✓ (v0.1.0), staging ✓,
+  smoke честно blocked `summary ok=1/5` (баг A12); `41683321364` — **success**:
+  `{"backend":"heuristic","version":"0.1.1","bump":"patch","risk":"low"}` →
+  smoke `pass 5/5` → prod-gate → deploy-prod → verify `keep (r1 3/3, r2 3/3)`.
+  Релизы: `v0.1.0`, `v0.1.1` (Latest).
