@@ -5,8 +5,8 @@
 # verify (агент: keep/rollback/escalate; rollback → dispatch rollback.yml).
 # Fail-closed: любой агентский шаг без валидного JSON останавливает релиз.
 #
-# Агентский бэкенд: AGENT_BACKEND=gh-models (GitHub Models через GITHUB_TOKEN,
-# permissions models: read) — внешние секреты не нужны. CLI-агент — как опция.
+# Агентский бэкенд: AGENT_BACKEND=heur (детерминированные эвристики, без секретов)
+# или cli (headless LLM-агент + AGENT_API_KEY). GitHub Models retired 2026-07-30.
 
 name: Release train
 
@@ -23,7 +23,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write            # аннотированный тег + GitHub Release
-      models: read
     concurrency:
       group: release-prep
       cancel-in-progress: false
@@ -52,8 +51,6 @@ jobs:
           AGENT_BACKEND: '${{ vars.AGENT_BACKEND }}'
           AGENT_CMD: '${{ vars.AGENT_CMD }}'
           AGENT_API_KEY: '${{ secrets.AGENT_API_KEY }}'
-          GH_MODEL: '${{ vars.GH_MODEL }}'
-          GITHUB_TOKEN: '${{ github.token }}'
         run: |
           {
             echo "previous_tag: ${{ steps.ctx.outputs.previous_tag }}"
@@ -119,7 +116,6 @@ jobs:
     permissions:
       contents: read
       issues: write
-      models: read
     steps:
       - uses: actions/checkout@v4
 
@@ -154,8 +150,6 @@ jobs:
           AGENT_BACKEND: '${{ vars.AGENT_BACKEND }}'
           AGENT_CMD: '${{ vars.AGENT_CMD }}'
           AGENT_API_KEY: '${{ secrets.AGENT_API_KEY }}'
-          GH_MODEL: '${{ vars.GH_MODEL }}'
-          GITHUB_TOKEN: '${{ github.token }}'
         run: |
           { echo "target_mode: $(cat /tmp/target_mode.txt)"; cat /tmp/health.txt; } > /tmp/smoke_ctx.txt
           bash scripts/agent.sh prompts/smoke.md verdict.json /tmp/smoke_ctx.txt
@@ -249,7 +243,6 @@ jobs:
       contents: read
       actions: write            # gh workflow run rollback.yml
       issues: write
-      models: read
     steps:
       - uses: actions/checkout@v4
 
@@ -295,8 +288,6 @@ jobs:
           AGENT_BACKEND: '${{ vars.AGENT_BACKEND }}'
           AGENT_CMD: '${{ vars.AGENT_CMD }}'
           AGENT_API_KEY: '${{ secrets.AGENT_API_KEY }}'
-          GH_MODEL: '${{ vars.GH_MODEL }}'
-          GITHUB_TOKEN: '${{ github.token }}'
         run: |
           { echo "target_mode: $(cat /tmp/target_mode.txt)"; cat /tmp/health_r1.txt /tmp/health_r2.txt /tmp/metrics.txt; } > /tmp/verify_ctx.txt
           bash scripts/agent.sh prompts/verify.md verdict.json /tmp/verify_ctx.txt
