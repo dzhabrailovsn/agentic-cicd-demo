@@ -1,0 +1,309 @@
+# Релизный поезд «агент-релиз-менеджер» (Вариант 2).
+# push в main → release-prep (агент: notes/semver/risk) → deploy staging →
+# smoke (агент, гейт) → prod-gate (environment production, ручное одобрение;
+# skip для risk=low при AUTO_PROD_LOW_RISK=true) → deploy prod →
+# verify (агент: keep/rollback/escalate; rollback → dispatch rollback.yml).
+# Fail-closed: любой агентский шаг без валидного JSON останавливает релиз.
+
+name: Release train
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # ── 1. Релиз-план: агент строит release notes, semver-версию и оценку риска ──
+  release-prep:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write            # аннотированный тег + GitHub Release
+    concurrency:
+      group: release-prep
+      cancel-in-progress: false
+    outputs:
+      version: ${{ steps.prep.outputs.version }}
+      previous_tag: ${{ steps.ctx.outputs.previous_tag }}
+      risk: ${{ steps.prep.outputs.risk }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Commit context
+        id: ctx
+        run: |
+          PREV="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          if [[ -n "$PREV" ]]; then
+            git log "$PREV..HEAD" --oneline --no-decorate > /tmp/commits.txt
+          else
+            git log --oneline --no-decorate -200 > /tmp/commits.txt
+          fi
+          echo "previous_tag=$PREV"        >> "$GITHUB_OUTPUT"
+          echo "current_version=${PREV#v}" >> "$GITHUB_OUTPUT"
+
+      # Раскомментируйте установку вашего агентского CLI на раннере:
+      # - name: Install agent CLI
+      #   run: npm i -g @zcode/cli
+
+      - name: "Agent: release plan"
+        env:
+          AGENT_CMD: '${{ vars.AGENT_CMD }}'
+          AGENT_API_KEY: '${{ secrets.AGENT_API_KEY }}'
+        run: |
+          {
+            echo "previous_tag: ${{ steps.ctx.outputs.previous_tag }}"
+            echo "current_version: ${{ steps.ctx.outputs.current_version }}"
+          } > /tmp/meta.txt
+          bash scripts/agent.sh prompts/release-notes.md release.json /tmp/commits.txt /tmp/meta.txt
+
+      - name: Validate plan
+        run: |
+          jq -e '.version | test("^\\d+\\.\\d+\\.\\d+$")' release.json
+          jq -e '(.bump == "major" or .bump == "minor" or .bump == "patch")' release.json
+          jq -e '.notes | type == "string"' release.json
+
+      - name: Persist outputs
+        id: prep
+        run: |
+          echo "version=$(jq -r .version release.json)" >> "$GITHUB_OUTPUT"
+          echo "risk=$(jq -r '.risk // "medium"' release.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Tag + GitHub Release
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          VERSION: '${{ steps.prep.outputs.version }}'
+        run: |
+          TAG="v$VERSION"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::тег $TAG уже существует — возможен двойной релиз"; exit 1
+          fi
+          git config user.name  "release-bot"
+          git config user.email "actions@github.com"
+          git tag -a "$TAG" -m "Release $VERSION"
+          git push origin "$TAG"
+          jq -r '.notes // empty' release.json > notes.md
+          [[ -s notes.md ]] || echo "Release $VERSION" > notes.md
+          gh release create "$TAG" --title "$TAG" --notes-file notes.md
+
+      - uses: actions/upload-artifact@v4
+        with: { name: release-plan, path: release.json, if-no-files-found: error }
+
+  # ── 2. Staging ──
+  deploy-staging:
+    needs: release-prep
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write           # OIDC-федерация в облако (если используется)
+    environment: staging
+    concurrency:
+      group: staging-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy staging
+        env:
+          DEPLOY_CMD: '${{ vars.DEPLOY_CMD_STAGING }}'
+          VERSION: 'v${{ needs.release-prep.outputs.version }}'
+        run: bash scripts/deploy.sh staging
+
+  # ── 3. Smoke (агент): гейт перед продом ──
+  smoke:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Health probes (staging)
+        env:
+          STAGING_URL: '${{ vars.STAGING_HEALTH_URL }}'
+        run: |
+          [[ -n "$STAGING_URL" ]] || { echo "::error::vars.STAGING_HEALTH_URL не задан"; exit 1; }
+          bash scripts/health.sh "$STAGING_URL" 5 3 > /tmp/health.txt || true
+          cat /tmp/health.txt
+
+      # Раскомментируйте установку вашего агентского CLI на раннере:
+      # - name: Install agent CLI
+      #   run: npm i -g @zcode/cli
+
+      - name: Agent smoke
+        env:
+          AGENT_CMD: '${{ vars.AGENT_CMD }}'
+          AGENT_API_KEY: '${{ secrets.AGENT_API_KEY }}'
+        run: bash scripts/agent.sh prompts/smoke.md verdict.json /tmp/health.txt
+
+      - name: Gate
+        run: bash scripts/gate.sh verdict.json pass
+
+      - name: "Escalate: issue on failure"
+        if: failure()
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          VERSION: 'v${{ needs.release-prep.outputs.version }}'
+        run: |
+          {
+            echo "Smoke-гейт упал на релизе **$VERSION** (staging). Релиз остановлен до прода."
+            echo
+            echo '```'
+            cat /tmp/health.txt 2>/dev/null || echo "(health-пробы недоступны)"
+            echo '```'
+            echo
+            echo "Вердикт агента:"
+            echo '```json'
+            cat verdict.json 2>/dev/null || echo "(нет валидного JSON — fail-closed)"
+            echo '```'
+          } > body.md
+          gh issue create --title "🚨 Release $VERSION: smoke failed (staging)" --body-file body.md
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: smoke-verdict, path: verdict.json, if-no-files-found: ignore }
+
+  # ── 4. Prod-гейт: ручное одобрение (skip для risk=low при AUTO_PROD_LOW_RISK=true) ──
+  prod-gate:
+    needs: [release-prep, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    if: needs.release-prep.outputs.risk != 'low' || vars.AUTO_PROD_LOW_RISK != 'true'
+    environment: production          # настроить required reviewers + wait timer
+    steps:
+      - name: Human approval recorded
+        run: |
+          echo "Прод одобрен вручную (environment: production)"
+
+  # ── 5a. Deploy prod (после ручного одобрения) ──
+  deploy-prod-reviewed:
+    needs: [release-prep, smoke, prod-gate]
+    if: ${{ !cancelled() && needs.release-prep.result == 'success' && needs.smoke.result == 'success' && needs.prod-gate.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment: production
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy production
+        env:
+          DEPLOY_CMD: '${{ vars.DEPLOY_CMD_PRODUCTION }}'
+          VERSION: 'v${{ needs.release-prep.outputs.version }}'
+        run: bash scripts/deploy.sh production
+
+  # ── 5b. Deploy prod (авто для low-risk) ──
+  deploy-prod-auto:
+    needs: [release-prep, smoke, prod-gate]
+    if: ${{ !cancelled() && needs.release-prep.result == 'success' && needs.smoke.result == 'success' && needs.prod-gate.result == 'skipped' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment: production-auto     # БЕЗ required reviewers
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy production (auto, low-risk)
+        env:
+          DEPLOY_CMD: '${{ vars.DEPLOY_CMD_PRODUCTION }}'
+          VERSION: 'v${{ needs.release-prep.outputs.version }}'
+        run: bash scripts/deploy.sh production
+
+  # ── 6. Verify (агент): keep / rollback / escalate ──
+  verify:
+    needs: [release-prep, deploy-prod-reviewed, deploy-prod-auto]
+    if: ${{ !cancelled() && (needs.deploy-prod-reviewed.result == 'success' || needs.deploy-prod-auto.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write            # gh workflow run rollback.yml
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Health probes (production, 2 раунда)
+        env:
+          PROD_URL: '${{ vars.PROD_HEALTH_URL }}'
+        run: |
+          [[ -n "$PROD_URL" ]] || { echo "::error::vars.PROD_HEALTH_URL не задан"; exit 1; }
+          bash scripts/health.sh "$PROD_URL" 3 20 > /tmp/health_r1.txt || true
+          sleep 60
+          bash scripts/health.sh "$PROD_URL" 3 20 > /tmp/health_r2.txt || true
+          cat /tmp/health_r1.txt /tmp/health_r2.txt
+
+      - name: Optional metrics hook (read-only)
+        run: |
+          # Опционально: ваш read-only хук метрик (Prometheus/CloudWatch API...).
+          # Вывод попадает агенту в контекст verify.
+          if [[ -f scripts/metrics.sh ]]; then
+            bash scripts/metrics.sh > /tmp/metrics.txt || true
+          else
+            echo "(metrics hook не задан)" > /tmp/metrics.txt
+          fi
+
+      # Раскомментируйте установку вашего агентского CLI на раннере:
+      # - name: Install agent CLI
+      #   run: npm i -g @zcode/cli
+
+      - name: Agent verify
+        env:
+          AGENT_CMD: '${{ vars.AGENT_CMD }}'
+          AGENT_API_KEY: '${{ secrets.AGENT_API_KEY }}'
+        run: bash scripts/agent.sh prompts/verify.md verdict.json /tmp/health_r1.txt /tmp/health_r2.txt /tmp/metrics.txt
+
+      - name: Resolve verdict
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          TAG: 'v${{ needs.release-prep.outputs.version }}'
+          PREV_TAG: '${{ needs.release-prep.outputs.previous_tag }}'
+        run: |
+          VERDICT="$(jq -r '.verdict // ""' verdict.json)"
+          echo "verify verdict: $VERDICT"
+          {
+            echo "## Release $TAG"
+            echo "- verify: **$VERDICT** — $(jq -r '.reason // ""' verdict.json)"
+            echo "- предыдущий тег: ${PREV_TAG:-<нет>}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          case "$VERDICT" in
+            keep)
+              echo "Релиз подтверждён."; exit 0 ;;
+            rollback)
+              if [[ -z "$PREV_TAG" ]]; then
+                echo "::error::rollback невозможен — это первый релиз (нет предыдущего тега)"; exit 1
+              fi
+              gh workflow run rollback.yml \
+                -f tag="$PREV_TAG" \
+                -f reason="auto-rollback после $TAG: $(jq -r '.reason // ""' verdict.json)"
+              echo "Rollback до $PREV_TAG запущен (см. Actions)." ;;
+            *)
+              echo "::error::верификация не пройдена (verdict=$VERDICT) — эскалация"; exit 1 ;;
+          esac
+
+      - name: "Escalate: issue on failure"
+        if: failure()
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          TAG: 'v${{ needs.release-prep.outputs.version }}'
+        run: |
+          {
+            echo "Post-deploy verify не пройден для **$TAG**."
+            echo
+            echo '```json'
+            cat verdict.json 2>/dev/null || echo "(нет валидного JSON — fail-closed)"
+            echo '```'
+            echo
+            echo "Логи: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > body.md
+          gh issue create --title "🚨 Release $TAG: verify failed" --body-file body.md
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: verify-verdict, path: verdict.json, if-no-files-found: ignore }

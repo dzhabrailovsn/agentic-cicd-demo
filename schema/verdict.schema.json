@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic CI/CD verdict contract",
+  "description": "Контракт ответов агента на всех стадиях. Блокирующая проверка — jq/gate.sh на поле verdict; схема — справочник полей.",
+  "type": "object",
+  "required": ["verdict", "summary"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["approve", "block", "pass", "keep", "rollback", "escalate"],
+      "description": "review: approve|block; smoke: pass|block; verify: keep|rollback|escalate"
+    },
+    "risk": { "type": "string", "enum": ["low", "medium", "high"] },
+    "summary": { "type": "string", "minLength": 1 },
+    "blockers": { "type": "array", "items": { "type": "string" } },
+    "suggestions": { "type": "array", "items": { "type": "string" } },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "bump": { "type": "string", "enum": ["major", "minor", "patch"] },
+    "notes": { "type": "string" },
+    "breaking": { "type": "array", "items": { "type": "string" } },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "ok"],
+        "properties": {
+          "name": { "type": "string" },
+          "ok": { "type": "boolean" },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "reason": { "type": "string" },
+    "evidence": { "type": "array", "items": { "type": "string" } },
+    "metrics": { "type": "object" }
+  },
+  "additionalProperties": true
+}

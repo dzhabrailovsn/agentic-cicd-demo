@@ -1,0 +1,13 @@
+{
+  "name": "agentic-cicd-demo-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Demo app for the agentic CI/CD pipeline (variant 2)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "lint": "node --check server.js && node --check test/health.test.js",
+    "test": "node --test test/",
+    "build": "node -e \"console.log('build ok')\""
+  }
+}

@@ -1,0 +1,66 @@
+# Откат прода на указанный тег.
+# Вызывается автоматически из verify (release.yml) или вручную:
+#   gh workflow run rollback.yml -f tag=v1.2.2 -f reason="инцидент"
+# Деплой идёт в environment production-auto (без required reviewers):
+# откат — быстрый путь, доступ к нему уже защищён perms токена и concurrency-группой.
+
+name: Rollback production
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Тег, на который откатиться (напр. v1.2.2)'
+        required: true
+      reason:
+        description: 'Причина отката'
+        required: false
+        default: 'manual rollback'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Check tag exists
+        run: |
+          git fetch --tags --force
+          git rev-parse -q --verify "refs/tags/${{ inputs.tag }}" \
+            || { echo "::error::тег ${{ inputs.tag }} не найден"; exit 1; }
+
+  rollback-deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment: production-auto
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ inputs.tag }}' }
+      - name: Deploy previous version
+        env:
+          DEPLOY_CMD: '${{ vars.DEPLOY_CMD_PRODUCTION }}'
+          VERSION: '${{ inputs.tag }}'
+        run: bash scripts/deploy.sh production
+
+  post-verify:
+    needs: rollback-deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ inputs.tag }}' }
+      - name: Health after rollback
+        run: bash scripts/health.sh "${{ vars.PROD_HEALTH_URL }}" 5 10
