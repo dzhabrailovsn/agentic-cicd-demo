@@ -11,7 +11,7 @@ INTERVAL="${3:-3}"
 BODY="$(mktemp)"; trap 'rm -f "$BODY"' EXIT
 
 ok=0
-for i in "$(seq 1 "$ATTEMPTS")"; do
+for i in $(seq 1 "$ATTEMPTS"); do
   out="$(curl -sS -o "$BODY" -w '%{http_code} %{time_total}' --max-time 10 "$URL" 2>/dev/null || echo '000 0')"
   code="${out%% *}"; lat="${out##* }"
   echo "probe=$i status=$code latency=${lat}s"
