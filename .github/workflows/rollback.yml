@@ -60,7 +60,12 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Скрипты берём из main (A7): старый тег мог содержать сломанные скрипты.
       - uses: actions/checkout@v4
-        with: { ref: '${{ inputs.tag }}' }
       - name: Health after rollback
-        run: bash scripts/health.sh "${{ vars.PROD_HEALTH_URL }}" 5 10
+        run: |
+          if [[ -z "${{ vars.PROD_HEALTH_URL }}" ]]; then
+            echo "::notice::PROD_HEALTH_URL не задан (DEMO режим) — post-verify пропущен: demo-deploy уже проверил health внутри job'а"
+            exit 0
+          fi
+          bash scripts/health.sh "${{ vars.PROD_HEALTH_URL }}" 5 10

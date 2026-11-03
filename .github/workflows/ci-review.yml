@@ -19,7 +19,7 @@ jobs:
           node-version: '20'
       # TODO: подставьте команды своего стека (pip/poetry/go test/cargo test ...)
       # Демо-приложение живёт в app/ — замените на своё.
-      - run: npm install
+      - run: npm ci
         working-directory: app
       - run: npm run lint --if-present
         working-directory: app

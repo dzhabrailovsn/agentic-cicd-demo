@@ -285,6 +285,8 @@ jobs:
           cat /tmp/health_r1.txt /tmp/health_r2.txt
 
       - name: Optional metrics hook (read-only)
+        env:
+          METRICS_URL: '${{ vars.METRICS_URL }}'
         run: |
           # Опционально: ваш read-only хук метрик (Prometheus/CloudWatch API...).
           # Вывод попадает агенту в контекст verify.
