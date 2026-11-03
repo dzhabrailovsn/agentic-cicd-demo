@@ -199,7 +199,8 @@ jobs:
     permissions:
       contents: read
     if: needs.release-prep.outputs.risk != 'low' || vars.AUTO_PROD_LOW_RISK != 'true'
-    environment: production          # настроить required reviewers + wait timer
+    # environment: production намеренно НЕ здесь — гейт одобрения живёт на
+    # deploy-prod-reviewed; дубль environment давал двойное ожидание апрува.
     steps:
       - name: Human approval recorded
         run: |
