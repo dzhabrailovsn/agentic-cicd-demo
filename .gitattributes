@@ -1,0 +1,5 @@
+# LF для скриптов и workflow — критично для bash на раннере (находка A10 спеки)
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
