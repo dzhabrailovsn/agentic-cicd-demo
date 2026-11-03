@@ -72,6 +72,14 @@ agentic-cicd/
    - `staging` — без защиты (или мягкая);
    - `production` — **required reviewers** (обязательно) + опционально wait timer;
    - `production-auto` — **без required reviewers** (для low-risk авто-деплоя и rollback).
+
+   ⚠️ **Лимит тарифного плана**: branch protection и environment protection rules
+   (required reviewers) доступны на приватных репозиториях только с GitHub Pro/Team
+   или если репозиторий публичный (API возвращает 403/422 «billing plan» иначе).
+   На free+private environment создастся, но гейт `prod-gate` не будет ждать
+   ручного одобрения — тогда единственными барьерами остаются fail-closed гейты
+   агента и `DEPLOY_CMD` (не задан → деплой не идёт). Аналогично branch protection
+   на main: включите после апгрейда/переключения видимости командой из SETUP ниже.
 5. **Агентский CLI на раннере**: раскомментируйте шаги `Install agent CLI` в workflow и задайте `AGENT_CMD`.
 6. **Branch protection на `main`**: required status checks — `tests` и `agent-review` из `ci-review.yml`.
 7. Merge в `main` → поезд поедет. Нюанс первого релиза: `previous_tag` пуст → авто-rollback недоступен (fail-closed).
@@ -109,6 +117,30 @@ agentic-cicd/
 - Права токенов минимальны и разложены по job'ам: `contents: write` только у release-prep (тег/release), `actions: write` только у verify (dispatch rollback), `pull-requests: write` только у ревью.
 - `workflow_dispatch`, вызванный через GITHUB_TOKEN, триггерит workflow (официальное исключение из правила «token-events не создают runs») — цепочка авто-rollback работает.
 - Секреты агента (`AGENT_API_KEY`) отделены от облачных; раннеры эфемерные; вердикты — в артефактах.
+
+## Включение branch protection (после апгрейда или переключения в public)
+
+```bash
+gh api -X PUT repos/<owner>/<repo>/branches/main/protection --input - <<'EOF'
+{
+  "required_status_checks": { "strict": true, "contexts": ["tests", "agent-review"] },
+  "enforce_admins": false,
+  "required_pull_request_reviews": { "required_approving_review_count": 1 },
+  "restrictions": null,
+  "required_linear_history": true,
+  "allow_force_pushes": false,
+  "allow_deletions": false
+}
+EOF
+```
+
+Для required reviewers на environment `production`:
+
+```bash
+USER_ID="$(gh api user --jq .id)"
+printf '{"wait_timer":0,"reviewers":[{"type":"User","id":%s}],"prevent_self_review":false}' "$USER_ID" \
+  | gh api -X PUT repos/<owner>/<repo>/environments/production --input -
+```
 
 ## Ограничения
 
