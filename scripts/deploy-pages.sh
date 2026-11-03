@@ -47,6 +47,11 @@ HTML
 printf '{"status":"ok","version":"%s","deployed_at":"%s"}\n' "$VERSION" "$STAMP" > health.json
 
 git add index.html health.json
+
+# на раннере identity не задан — задаём repo-local
+git config user.name  "${GIT_AUTHOR_NAME:-release-bot}"
+git config user.email "${GIT_AUTHOR_EMAIL:-actions@github.com}"
+
 if git diff --cached --quiet; then
   echo "контент не изменился — пуш не нужен"
 else
