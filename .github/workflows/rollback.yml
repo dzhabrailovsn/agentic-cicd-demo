@@ -39,7 +39,7 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write          # push в gh-pages (деплой Pages)
       id-token: write
     environment: production-auto
     concurrency:

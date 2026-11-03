@@ -211,7 +211,7 @@ jobs:
     if: ${{ !cancelled() && needs.release-prep.result == 'success' && needs.smoke.result == 'success' && needs.prod-gate.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write          # push в gh-pages (деплой Pages)
       id-token: write
     environment: production
     concurrency:
@@ -231,7 +231,7 @@ jobs:
     if: ${{ !cancelled() && needs.release-prep.result == 'success' && needs.smoke.result == 'success' && needs.prod-gate.result == 'skipped' }}
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write          # push в gh-pages (деплой Pages)
       id-token: write
     environment: production-auto     # БЕЗ required reviewers
     concurrency:

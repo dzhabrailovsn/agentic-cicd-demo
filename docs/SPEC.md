@@ -2,9 +2,10 @@
 
 | | |
 |---|---|
-| **Дата актуальности** | 2026-11-03 · **ревизия 4** |
+| **Дата актуальности** | 2026-11-03 · **ревизия 5** |
 | **Состояние кода** | main, «openrouter LLM backend» (этот коммит); ревизии: 1 — `a472398`, 2 — `48f6717` |
-| **Инстанс** | `dzhabrailovsn/agentic-cicd-demo`, PRIVATE |
+| **Инстанс** | `dzhabrailovsn/agentic-cicd-demo`, **PUBLIC** (рев. 5; в коде секретов нет — проверено grep'ом) |
+| **Прод** | **реальный, публичный**: <https://dzhabrailovsn.github.io/agentic-cicd-demo/> (GitHub Pages, ветка gh-pages); health — `/health.json`; деплой из поезда (`deploy-pages.sh`) |
 | **Источники** | аудит рев. 1–2 + живые прогоны: `41683321364`/`41684552807` (success end-to-end), `41704653248` (success, v0.1.3 — проверка fallback-политики в бою) |
 | **Статус системы** | ✅ конвейер end-to-end; агент: **openai-бэкенд (OpenRouter free) с авто-fallback на heur** — ждёт бесплатный ключ (`OPENROUTER_API_KEY`), до ключа вердикты отдаёт fallback (v0.1.3 подтверждён). Осталось: enforcement-гейты (A3/A4, тариф), реальный клауд (A11), вставить ключ (A1-note, финал) |
 
@@ -31,8 +32,8 @@ verify), авто- и ручной rollback, аудит-артефакты. Вн
 | JSON-схема вердиктов | `schema/verdict.schema.json` — валидный JSON | ✅ |
 | Variables | `AGENT_BACKEND=heur`, `AGENT_CMD=zcode -p` (резерв для cli), `AUTO_PROD_LOW_RISK=false`, `DEPLOY_CMD_*=bash scripts/demo-deploy.sh …` | ✅ установлены |
 | Secrets | пусто — и для бэкенда `heur` **не требуются** (для LLM `cli` понадобится `AGENT_API_KEY`) | ✅ |
-| Environments | `staging`, `production`, `production-auto` созданы, `protection_rules=0` | 🔶 A3/A4 |
-| Branch protection (main) | HTTP 403 «Upgrade to GitHub Pro or make public» | 🔶 A3 |
+| Environments | `staging`, `production` (**required reviewer: dzhabrailovsn**), `production-auto` | ✅ A4 закрыт (рев. 5) |
+| Branch protection (main) | required checks `tests`+`agent-review`, 1 approval, linear history | ✅ A3 закрыт (рев. 5) |
 | Агентский бэкенд | **`openai`** — OpenAI-протокол (OpenRouter, free `:free`-модели, default `openrouter/free`); секрет `OPENROUTER_API_KEY` ожидается от владельца. При недоступности LLM — **авто-fallback на `heur`** (поле `"backend"` в вердикте фиксирует, кто решал; отключение — `AGENT_FALLBACK=none`). GitHub Models retired 2026-07-30 — путь удалён. Локальные тесты: mock-сервер (happy-path, fallback, fail-closed), 7 кейсов heur | ✅ / ключ — A1-note |
 | `DEPLOY_CMD_STAGING/PRODUCTION` | установлены → `demo-deploy.sh`: поднимает артефакт на раннере и проверяет /health | 🔶 A11 (не реальный клауд) |
 | Health URLs (staging/prod) | не заданы → smoke/verify работают в DEMO-режиме (артефакт поднимается в job, реальный URL — при задании переменной) | 🔶 A11 |
@@ -153,15 +154,15 @@ Environments: `staging` (без защиты), `production` (замысел: req
 |---|---|---|---|
 | **A1** | ✅ ЗАКРЫТО (рев. 2); **рев. 3: LLM-слой добавлен** | GitHub Models retired 2026-07-30 (ран `41680931868`). Реализовано два уровня: **`openai`** — OpenRouter free-модели по OpenAI-протоколу (16 живых `:free`-моделей проверено по API; расход 3 вызова/релиз vs лимит 50/день) + **`heur`** — детерминированные эвристики как fallback. Проверено локально (mock: happy-path/fallback/fail-closed) и в бою (ран `41704653248`: «ключ не задан → fallback → v0.1.3 success»). Остался один шаг: владелец кладёт бесплатный ключ в secret `OPENROUTER_API_KEY` | [README §Подключение OpenRouter](../README.md) — 2 минуты |
 | **A2** | 🔶 → **A11** | `DEPLOY_CMD_*` установлены, но указывают на `demo-deploy.sh` (артефакт поднимается на раннере, /health проверяется — конвейер зелёный; реальный клауд не задействован) | См. новую A11 |
-| **A3** | 🔶 P1 (лимит плана) | Branch protection на main недоступен: HTTP 403 (free + PRIVATE). Required checks `tests`/`agent-review` не enforced — PR можно смержить мимо ревью | GitHub Pro/Team или переключить репо в public; затем PUT из README §«Включение branch protection» |
-| **A4** | 🔶 P1 (лимит плана) | Environment protection rules не применились: HTTP 422 «billing plan does not support required reviewers» → `prod-gate` не ждёт одобрения и проходит мгновенно. **Фактически сейчас прод-деплой автоматический для любого risk, несмотря на `AUTO_PROD_LOW_RISK=false`** | Та же причина/решение, что A3. До этого момента единственный барьер перед продом — smoke + A2 |
+| **A3** | ✅ ЗАКРЫТО (рев. 5) | Репо переключён в public (решение делегировано пользователем «сам реши»; секретов в коде нет) → branch protection активен: required checks + 1 approval | — |
+| **A4** | ✅ ЗАКРЫТО (рев. 5) | Environment `production`: required reviewer `dzhabrailovsn`. Гейт `prod-gate` реально ждёт одобрения для risk≠low; для low-risk включён `AUTO_PROD_LOW_RISK=true` (auto-путь через `production-auto` — переключается одной переменной) | — |
 | **A5** | ✅ ЗАКРЫТО (рев. 2) | URL не заданы → добавлен **DEMO-режим** smoke/verify: при пустой переменной job сам поднимает релизный артефакт (порты 3001/3002) и проверяет его; при задании URL автоматически включается real-режим | Задать URL вместе с A11 |
 | **A6** | ✅ ЗАКРЫТО (рев. 4) | Сгенерирован `app/package-lock.json`, CI переключён на `npm ci` — воспроизводимые сборки | — |
 | **A7** | ✅ ЗАКРЫТО (рев. 4) | `post-verify` rollback берёт скрипты из **main** (старый тег больше не влияет на верификацию); шаг demo-aware — без `PROD_HEALTH_URL` пропускается с notice, а не фейлит откат | — |
 | **A8** | 🟡 P2 | `deploy.sh` исполняет `bash -c "$DEPLOY_CMD"` из repo variable — доверенная зона админа репо; менять variables может только admin (приемлемо, задокументировать) | Оставить; не класть туда секреты (см. README ⚠) |
 | **A9** | ✅ ЗАКРЫТО (рев. 4) | Добавлен `scripts/metrics.sh` — read-only хук (repo variable `METRICS_URL`); вывод попадает в контекст verify; без URL — notice, не фейл | Подключить реальные метрики заданием `METRICS_URL` |
 | **A10** | 🟢 P3 | Git на Windows даёт CRLF-предупреждения; теоретический риск поломки LF-скриптов при повторном чекауте | Добавлен `.gitattributes` (в этом же коммите): `*.sh`, `*.yml` — `eol=lf` |
-| **A11** | 🔶 P1 (новое, рев. 2) | Деплой-таргет — demo-заглушка на раннере: «прод» — одноразовый процесс внутри job'а, состояние не сохраняется между джобами | Подключить реальный клауд: OIDC + настоящие `DEPLOY_CMD_*` + health URLs |
+| **A11** | 🔶 → **закрыт на 80% (рев. 5)** | Реальный публичный прод подключён: **GitHub Pages** (деплой `scripts/deploy-pages.sh` из поезда; verify ходит в живой URL). Оставшийся 20% — облачный рантайм контейнера: путь **cloud.ru Container Apps** полностью подготовлен (`deploy-cloudru.sh`, Dockerfile, чек-лист в README) и включается, когда владелец добавит `EVO_CR_LOGIN/PWD` + сообщит URI реестра | 2 секрета + URI |
 | **A12** | ✅ ЗАКРЫТО (рев. 2) | `health.sh`: `for i in "$(seq …)"` (заквочено) выполнял **одну** пробу вместо N → `summary ok=1/5` → честный false-block смока (ран `41682567346`). Побочно найдено: `jq -R -s` на пустом вводе выдаёт пустоту (ломало `--argjson` эвристик) | Исправлено: цикл без кавычек; эвристики защищены от пустого ввода; проверено локально на живом сервере (ok=5/5) |
 
 ## 9. Definition of Done (перевод системы в рабочее состояние)
@@ -169,7 +170,7 @@ Environments: `staging` (без защиты), `production` (замысел: req
 - **D1** ✅ (рев. 2, бэкенд `heur`): агентские вердикты в живом ране `41683321364`; LLM-вариант — после ключа (A1-note).
 - **D2** ✅ (рев. 2): `v0.1.1` — тег + GitHub Release + успешный `deploy-staging` (demo-таргет).
 - **D3** ✅ (рев. 2, DEMO-режим): `smoke → pass`, `summary ok=5/5`; real-режим — вместе с A11.
-- **D4** ⬜ — тариф/видимость репо (A3/A4).
+- **D4** ✅ (рев. 5): branch protection активен; reviewer на `production` подтверждён API.
 - **D5** ✅ (рев. 4): репетиция rollback проведена — `gh workflow run rollback.yml -f tag=v0.2.0` (ран `41713110531`): validate → rollback-deploy → post-verify, все success. Авто-rollback из verify использует тот же механизм.
 - **PR-гейт** ✅ (рев. 4): первая живая проверка `ci-review` — [PR #2](https://github.com/dzhabrailovsn/agentic-cicd-demo/pull/2): tests ✓, agent-review ✓ (9s), комментарий агента `approve · risk: low`.
 
